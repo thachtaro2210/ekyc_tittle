@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+torchvision==0.17.2
+numpy<2
+flask>=3.1,<4
+gunicorn>=23,<24
+opencv-python-headless
+Pillow
+vietocr>=0.3.13,<0.4
+yolov5>=7.0.14,<8
+ultralytics>=8.3.169,<9
+onnx>=1.16.1
+onnxruntime>=1.18.0
