@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 
@@ -7,8 +8,14 @@ from face_service import FaceError, FaceVerifier
 from ocr_service import CccdOcr, OcrError
 
 app = Flask(__name__)
+app.logger.setLevel(logging.INFO)  # Flask only shows WARNING+ by default
 ocr = CccdOcr()  # load models once at startup
 face = FaceVerifier()
+
+
+def _describe_result(result: dict) -> str:
+    """Log the shape of an OCR result, never the personal values."""
+    return ", ".join(f"{key}={len(str(value))} chars" for key, value in result.items())
 
 
 def _run(field: str, extract):
@@ -20,8 +27,11 @@ def _run(field: str, extract):
     os.close(fd)
     try:
         file.save(path)
-        return jsonify({"result": extract(path)})
+        result = extract(path)
+        app.logger.info("OCR %s ok: %s", field, _describe_result(result))
+        return jsonify({"result": result})
     except OcrError as e:
+        app.logger.warning("OCR %s rejected: %s", field, e)
         return jsonify({"error": str(e)}), 422
     except Exception:
         app.logger.exception("OCR failed")
@@ -57,8 +67,14 @@ def face_verify():
             os.close(fd)
             paths.append(path)
             f.save(path)
-        return jsonify({"result": face.verify(paths[:-1], paths[-1])})
+        result = face.verify(paths[:-1], paths[-1])
+        app.logger.info(
+            "Face verify ok: liveness=%s match=%s distance=%s spoofScore=%s",
+            result["liveness"], result["match"], result["distance"], result["spoofScore"],
+        )
+        return jsonify({"result": result})
     except FaceError as e:
+        app.logger.warning("Face verify rejected: %s", e)
         return jsonify({"error": str(e)}), 422
     except Exception:
         app.logger.exception("Face verify failed")
