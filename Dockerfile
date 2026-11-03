@@ -8,4 +8,4 @@ COPY . .
 ENV OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
 EXPOSE 8000
 # One worker: each worker holds its own copy of all models, and requests are serialized by a lock anyway.
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "-w", "1", "--threads", "2", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "-w", "1", "--threads", "2", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
