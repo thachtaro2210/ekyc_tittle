@@ -143,7 +143,9 @@ class FaceVerifier:
             if not found:
                 return {"faceFound": False, "pose": None, "matches": False}
             detected = detect_orientation(found[2])
-            pose = "center" if detected == "front" else detected
+            # The reference rule names the side as it appears in the (unmirrored) image; the user's left shows
+            # as image right, so swap to report the user's own side.
+            pose = {"front": "center", "left": "right", "right": "left"}[detected]
             matches = detected == "front" if expected in ("center", "up") else pose == expected
             return {"faceFound": True, "pose": pose, "matches": matches}
 
