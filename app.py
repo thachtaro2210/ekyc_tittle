@@ -93,16 +93,11 @@ def face_pose():
     expected = request.form.get("expected", "")
     if not image or not (image.mimetype or "").startswith("image/"):
         return jsonify({"error": "Thiếu file ảnh 'image'"}), 400
-    try:
-        base_pitch = float(request.form["basePitch"]) if request.form.get("basePitch") else None
-    except ValueError:
-        return jsonify({"error": "basePitch không hợp lệ"}), 400
-
     fd, path = tempfile.mkstemp(suffix=".jpg")
     os.close(fd)
     try:
         image.save(path)
-        result = face.pose(path, expected, base_pitch, request.form.get("mirrored") == "1")
+        result = face.pose(path, expected)
         app.logger.info(
             "Face pose ok: expected=%s pose=%s matches=%s", expected, result["pose"], result["matches"]
         )

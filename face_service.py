@@ -13,44 +13,36 @@ from minifasnet import MiniFASNetV2
 WEIGHTS_DIR = Path(__file__).resolve().parent / "weights"
 MAX_DIM = 1080
 MIN_FACE_SCORE = 0.9
-EMBED_MARGIN = 0.25  # wider than the detector box: keeps hairline and chin, which helps selfie-vs-ID matching
+EMBED_MARGIN = 0.0  # reference service crops the detector box as-is (padding=1px)
 SPOOF_CROP_SCALE = 2.7  # MiniFASNetV2 "2.7_80x80" expects the box enlarged 2.7x
 SPOOF_REAL_THRESHOLD = 0.5
 # Euclidean distance between L2-normalised VGGFace2 embeddings; lower = more similar.
-MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "1.05"))
+MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.85"))
 
 
-# Head-pose challenge thresholds, in units of inter-eye distance (yaw) and of the eye-to-mouth span (pitch).
-POSE_CENTER_YAW = 0.15
-POSE_TURN_YAW = 0.25
-POSE_UP_DELTA = 0.12  # nose ratio must drop this far below the user's own frontal ratio
 POSE_NAMES = ("center", "left", "right", "up")
+# Angle (degrees) between the eye line and the eye-to-nose vector; both eyes inside this range = frontal.
+FRONTAL_ANGLE_RANGE = (25, 60)
 
 
 class FaceError(Exception):
     pass
 
 
-def _pose_metrics(lm) -> tuple[float, float]:
-    """yaw: nose offset from the eye midpoint / eye distance (+ = nose toward image right, i.e. user turned to their left).
-    pitch: nose position between eye line and mouth line (0 = eyes, 1 = mouth); falls when looking up."""
-    (lx, ly), (rx, ry), (nx, ny) = lm[0], lm[1], lm[2]
-    mouth_y = (lm[3][1] + lm[4][1]) / 2
-    eye_mid_x, eye_mid_y = (lx + rx) / 2, (ly + ry) / 2
-    eye_dist = max(abs(rx - lx), 1e-6)
-    span = max(mouth_y - eye_mid_y, 1e-6)
-    return float((nx - eye_mid_x) / eye_dist), float((ny - eye_mid_y) / span)
+def _angle(v1: np.ndarray, v2: np.ndarray) -> float:
+    cosine = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    return float(np.round(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))))
 
 
-def classify_pose(yaw: float, pitch: float, base_pitch: float | None) -> str | None:
-    """Maps metrics to one of POSE_NAMES. `base_pitch` is the pitch of the user's own frontal capture."""
-    if abs(yaw) >= POSE_TURN_YAW:
-        return "left" if yaw > 0 else "right"  # unmirrored capture: user turning to their left shows the nose on image right
-    if abs(yaw) > POSE_CENTER_YAW:
-        return None  # between frontal and turned: ask the user to commit
-    if base_pitch is not None and pitch <= base_pitch - POSE_UP_DELTA:
-        return "up"
-    return "center"
+def detect_orientation(lm) -> str:
+    """'front', 'left' or 'right' from the eye and nose landmarks (same rule as the reference eKYC service)."""
+    left_eye, right_eye, nose = (np.array(lm[i], dtype=float) for i in range(3))
+    left_angle = _angle(right_eye - left_eye, nose - left_eye)
+    right_angle = _angle(left_eye - right_eye, nose - right_eye)
+    low, high = FRONTAL_ANGLE_RANGE
+    if low <= left_angle <= high and low <= right_angle <= high:
+        return "front"
+    return "right" if left_angle < right_angle else "left"
 
 
 class FaceVerifier:
@@ -142,25 +134,18 @@ class FaceVerifier:
         emb = self._embedder.run(None, {self._embedder.get_inputs()[0].name: inp})[0][0]
         return emb / np.linalg.norm(emb)
 
-    def pose(self, path: str, expected: str, base_pitch: float | None = None, mirrored: bool = False) -> dict:
-        """Head-pose challenge step: does this frame show `expected` (one of POSE_NAMES)?"""
+    def pose(self, path: str, expected: str) -> dict:
+        """Head-pose challenge step. 'center' and 'up' both expect a frontal face, as in the reference service."""
         if expected not in POSE_NAMES:
             raise FaceError("Hướng khuôn mặt không hợp lệ")
         with self._lock:
             found = self._largest_face(self._load(path))
             if not found:
                 return {"faceFound": False, "pose": None, "matches": False}
-            yaw, pitch = _pose_metrics(found[2])
-            if mirrored:
-                yaw = -yaw
-            pose = classify_pose(yaw, pitch, base_pitch)
-            return {
-                "faceFound": True,
-                "pose": pose,
-                "matches": pose == expected,
-                "yaw": round(yaw, 3),
-                "pitch": round(pitch, 3),
-            }
+            detected = detect_orientation(found[2])
+            pose = "center" if detected == "front" else detected
+            matches = detected == "front" if expected in ("center", "up") else pose == expected
+            return {"faceFound": True, "pose": pose, "matches": matches}
 
     def verify(self, selfie_paths: list[str], id_path: str) -> dict:
         with self._lock:
