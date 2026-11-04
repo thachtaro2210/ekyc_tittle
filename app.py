@@ -87,6 +87,39 @@ def face_verify():
                 pass
 
 
+@app.post("/api/face/pose")
+def face_pose():
+    image = request.files.get("image")
+    expected = request.form.get("expected", "")
+    if not image or not (image.mimetype or "").startswith("image/"):
+        return jsonify({"error": "Thiếu file ảnh 'image'"}), 400
+    try:
+        base_pitch = float(request.form["basePitch"]) if request.form.get("basePitch") else None
+    except ValueError:
+        return jsonify({"error": "basePitch không hợp lệ"}), 400
+
+    fd, path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        image.save(path)
+        result = face.pose(path, expected, base_pitch, request.form.get("mirrored") == "1")
+        app.logger.info(
+            "Face pose ok: expected=%s pose=%s matches=%s", expected, result["pose"], result["matches"]
+        )
+        return jsonify({"result": result})
+    except FaceError as e:
+        app.logger.warning("Face pose rejected: %s", e)
+        return jsonify({"error": str(e)}), 422
+    except Exception:
+        app.logger.exception("Face pose failed")
+        return jsonify({"error": "Lỗi xử lý ảnh"}), 500
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
